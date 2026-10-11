@@ -68,8 +68,8 @@ const char *kandoNames[KANDO_COUNT] = {
 #define SNES_L      10
 #define SNES_R      11
 
-// 設定済みの感度・無視時間パラメータ
-int kando[KANDO_COUNT] = {120, 90, 90, 120, 50, 20, 80, 10, 60, 30, 50, 50};
+// 設定済みの感度・無視時間パラメータ（HOLD_MSは20に設定）
+int kando[KANDO_COUNT] = {120, 90, 90, 120, 50, 20, 80, 20, 60, 30, 50, 50};
 long int result_ac[4] = {0, 0, 0, 0};
 
 #define CAL_ROUTE_COUNT 12
@@ -658,24 +658,19 @@ void loop() {
     if (s & (1 << SNES_START))  report.buttons |= (1 << POKKEN_PLUS);
   }
 
-  // ★【配置マッピング】★
-  // 左縁 (0: L_EDGE) -> 十字キー 【左】 (←)
-  // 左面 (1: L_FACE) -> 十字キー 【右】 (→)
-  // 右面 (2: R_FACE) -> 【B】ボタン
-  // 右縁 (3: R_EDGE) -> 【A】ボタン
-  bool piezo_left  = (piezo_hold & (1 << 0)); 
-  bool piezo_right = (piezo_hold & (1 << 1)); 
-  
-  if (piezo_hold & (1 << 2)) report.buttons |= (1 << POKKEN_B); 
-  if (piezo_hold & (1 << 3)) report.buttons |= (1 << POKKEN_A); 
+  // ★【新しいタタコン割り当て（ZL, ZR, LS, RS）】★
+  // 左カ   (0: L_EDGE) -> ZL (bit 6)
+  // 左ドン (1: L_FACE) -> LS (bit 10 / LCLICK)
+  // 右ドン (2: R_FACE) -> RS (bit 11 / RCLICK)
+  // 右カ   (3: R_EDGE) -> ZR (bit 7)
+  if (piezo_hold & (1 << 0)) report.buttons |= (1 << POKKEN_ZL);     
+  if (piezo_hold & (1 << 1)) report.buttons |= (1 << POKKEN_LCLICK); 
+  if (piezo_hold & (1 << 2)) report.buttons |= (1 << POKKEN_RCLICK); 
+  if (piezo_hold & (1 << 3)) report.buttons |= (1 << POKKEN_ZR);     
 
-  // SNES側の十字キー入力とピエゾ側の十字キー入力を合成
-  bool hat_up    = (s & (1 << SNES_UP));
-  bool hat_down  = (s & (1 << SNES_DOWN));
-  bool hat_left  = (s & (1 << SNES_LEFT))  || piezo_left;
-  bool hat_right = (s & (1 << SNES_RIGHT)) || piezo_right;
-
-  report.hat = calcHat(hat_up, hat_down, hat_left, hat_right);
+  // SNES側の十字キー入力をそのままハットスイッチにセット
+  report.hat = calcHat(s & (1 << SNES_UP), s & (1 << SNES_DOWN),
+                       s & (1 << SNES_LEFT), s & (1 << SNES_RIGHT));
 
   report.x = 2048;
   report.y = 2048;
