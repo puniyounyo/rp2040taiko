@@ -22,7 +22,10 @@
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 // RP2040-ZeroのオンボードNeoPixelピン
+#ifndef PIN_NEOPIXEL
 #define PIN_NEOPIXEL 16
+#endif
+
 #define NUM_PIXELS   1
 Adafruit_NeoPixel pixels(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 
@@ -675,5 +678,5 @@ void loop() {
   report.rz = 2048;
 
   usb_hid.sendReport(0, &report, sizeof(report));
-  delay(8);
+  delay(2);
 }
