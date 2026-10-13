@@ -40,22 +40,33 @@ uint8_t key_map[4] = {HID_KEY_D, HID_KEY_F, HID_KEY_J, HID_KEY_K};
 bool switchMode = true;
 bool oled_ok = false;
 bool settingMode = false;
-bool suppress_normal_until_release = false;
+bool autoCalibMode = false; 
 int currentSetting = 0;
 bool raw_debug_mode = false;
 
-// 15項目の設定パラメータ (keyboard.h 準拠)[cite: 1]
-#define KANDO_COUNT 15
+// keyboard.h 準拠の洗練されたパラメータ配列（12項目）
+#define KANDO_COUNT 12
 int kando[KANDO_COUNT] = {
-    80, 160, 160, 80, 30, 12, 35, 0, 0, 0, 25, 1, 0, 30, 0
+    80,  // 0: L_EDGE 感度
+    160, // 1: L_FACE 感度
+    160, // 2: R_FACE 感度
+    80,  // 3: R_EDGE 感度
+    30,  // 4: FACE_INTV (面が入力された際の次の入力受付時間 B)
+    12,  // 5: EDGE_INTV (縁の入力受付時間 C)
+    35,  // 6: CROSS_IG (面入力時に縁を無視する時間 D)
+    0,   // 7: HOLD_MS (入力保持時間 H)
+    0,   // 8: FACE_SGL (面の単体入力受付時間 A)
+    0,   // 9: EDGE_SGL (縁の単体入力受付時間 A_edge)
+    25,  // 10: 予備・ペア遅延用
+    1    // 11: 予備・モード切替用
 };
 
 const char *kandoNames[KANDO_COUNT] = {
     "L_EDGE", "L_FACE", "R_FACE", "R_EDGE", "FACE_INTV",
     "EDGE_INTV", "CROSS_IG", "HOLD_MS", "FACE_SGL", "EDGE_SGL",
-    "HOLD_T", "SPLIT_M", "PID_SEL", "LED_BRI", "KEY_CFG"
+    "PARAM_10", "PARAM_11"
 };
-#define EEPROM_SIZE 32
+#define EEPROM_SIZE 16
 
 #define PIN_LATCH 0
 #define PIN_CLOCK 1
@@ -76,9 +87,11 @@ const char *kandoNames[KANDO_COUNT] = {
 
 long int result_ac[4] = {0, 0, 0, 0};
 int32_t last_deltas[4] = {0, 0, 0, 0};
+uint16_t delta_max[4] = {0}; // keyboard.h 由来のピーク監視用[cite: 1]
 
 #define CAL_ROUTE_COUNT 12
 
+// keyboard.h 由来の高度なPairDelayGateおよびプロファイル構造[cite: 1]
 struct CalibrationProfile {
   uint16_t threshold[4];
   uint16_t self_face_b;   
@@ -117,7 +130,7 @@ void build_profile_from_kando(CalibrationProfile &p) {
     }
   }
   uint8_t r_lr = cal_route_index(1, 2), r_rl = cal_route_index(2, 1);  
-  p.pair_delay_ms[r_lr] = (uint16_t)kando[10]; // プロファイル内流用
+  p.pair_delay_ms[r_lr] = (uint16_t)kando[10];
   p.pair_delay_ms[r_rl] = (uint16_t)kando[10];
   uint8_t r_le = cal_route_index(0, 3), r_el = cal_route_index(3, 0);  
   p.pair_delay_ms[r_le] = (uint16_t)kando[10];
@@ -171,54 +184,22 @@ private:
 PairDelayGate piezo_gate;
 CalibrationProfile piezo_profile;
 
-// 自動キャリブレーション用変数
-bool autoCalibRunning = false;
-int calibTargetSensor = 0;      // 0〜3
-int calibHitCount = 0;          // 目標20回
-int32_t calibMaxDeltas[20];     // 20回分のピーク値記録
+// 自動キャリブレーション用状態変数
+int calibTargetSensor = 0;      // 0:L_EDGE, 1:L_FACE, 2:R_FACE, 3:R_EDGE
+int calibHitCount = 0;          // 0〜20回
+int32_t calibMaxDeltas[20];     // ピーク値の記録
 
 uint8_t const desc_hid_report[] = {
-  0x05, 0x01,      
-  0x09, 0x05,      
-  0xA1, 0x01,      
-    0x15, 0x00,      
-    0x25, 0x01,      
-    0x35, 0x00,      
-    0x45, 0x01,      
-    0x75, 0x01,      
-    0x95, 0x0D,      
-    0x05, 0x09,      
-    0x19, 0x01,      
-    0x29, 0x0D,      
-    0x81, 0x02,      
-    
-    0x75, 0x03,      
-    0x95, 0x01,      
-    0x81, 0x03,      
-
-    0x05, 0x01,      
-    0x25, 0x07,      
-    0x46, 0x3B, 0x01,
-    0x75, 0x04,      
-    0x95, 0x01,      
-    0x65, 0x14,      
-    0x09, 0x39,      
-    0x81, 0x42,      
-
-    0x75, 0x04,      
-    0x95, 0x01,      
-    0x81, 0x03,      
-
-    0x15, 0x00,      
-    0x26, 0xFF, 0x0F,
-    0x75, 0x10,      
-    0x95, 0x04,      
-    0x09, 0x30,      
-    0x09, 0x31,      
-    0x09, 0x32,      
-    0x09, 0x35,      
-    0x81, 0x02,      
-  0xC0               
+  0x05, 0x01,      0x09, 0x05,      0xA1, 0x01,      
+    0x15, 0x00,      0x25, 0x01,      0x35, 0x00,      0x45, 0x01,      
+    0x75, 0x01,      0x95, 0x0D,      0x05, 0x09,      0x19, 0x01,      
+    0x29, 0x0D,      0x81, 0x02,      0x75, 0x03,      0x95, 0x01,      
+    0x81, 0x03,      0x05, 0x01,      0x25, 0x07,      0x46, 0x3B, 0x01,
+    0x75, 0x04,      0x95, 0x01,      0x65, 0x14,      0x09, 0x39,      
+    0x81, 0x42,      0x75, 0x04,      0x95, 0x01,      0x81, 0x03,      
+    0x15, 0x00,      0x26, 0xFF, 0x0F,0x75, 0x10,      0x95, 0x04,      
+    0x09, 0x30,      0x09, 0x31,      0x09, 0x32,      0x09, 0x35,      
+    0x81, 0x02,      0xC0               
 };
 
 Adafruit_USBD_HID usb_hid;
@@ -252,7 +233,7 @@ void saveSettings();
 
 void setup() {
   pixels.begin();
-  pixels.setBrightness(kando[13] > 0 ? kando[13] : 30); 
+  pixels.setBrightness(30); 
   pixels.show();
 
   pinMode(PIN_LATCH, OUTPUT);
@@ -277,13 +258,13 @@ void setup() {
     USBDevice.setProductDescriptor("POKKEN CONTROLLER");
     usb_hid.setReportDescriptor(desc_hid_report, sizeof(desc_hid_report));
     
-    pixels.setPixelColor(0, pixels.Color(0, 0, 255));
+    pixels.setPixelColor(0, pixels.Color(0, 0, 255)); // 青：Switchモード
     pixels.show();
   } else {
     USBDevice.setID(0xCAFE, 0x4004);
     usb_hid.setReportDescriptor(desc_hid_report_keyboard, sizeof(desc_hid_report_keyboard));
     
-    pixels.setPixelColor(0, pixels.Color(0, 255, 0));
+    pixels.setPixelColor(0, pixels.Color(0, 255, 0)); // 緑：PCモード
     pixels.show();
   }
 
@@ -291,9 +272,7 @@ void setup() {
   usb_hid.begin();
 
   if (switchMode) {
-    while (!USBDevice.mounted()) {
-      delay(10);
-    }
+    while (!USBDevice.mounted()) { delay(10); }
     delay(500);
   } else {
     Serial.begin(115200);
@@ -308,7 +287,6 @@ void setup() {
 
   EEPROM.begin(EEPROM_SIZE);
   loadSettings();
-  pixels.setBrightness(kando[13] > 0 ? kando[13] : 30);
   piezo_gate.reset();
 
   Wire.setSDA(OLED_SDA);
@@ -335,9 +313,7 @@ uint16_t readSNES() {
   delayMicroseconds(6);
 
   for (int i = 0; i < 16; i++) {
-    if (digitalRead(PIN_DATA) == LOW) {
-      state |= (1 << i);
-    }
+    if (digitalRead(PIN_DATA) == LOW) { state |= (1 << i); }
     digitalWrite(PIN_CLOCK, LOW);
     delayMicroseconds(6);
     digitalWrite(PIN_CLOCK, HIGH);
@@ -347,14 +323,14 @@ uint16_t readSNES() {
 }
 
 uint8_t calcHat(bool up, bool down, bool left, bool right) {
-  if (up    && right) return 1;
-  if (down  && right) return 3;
-  if (down  && left)  return 5;
-  if (up    && left)  return 7;
-  if (up)    return 0;
+  if (up && right) return 1;
+  if (down && right) return 3;
+  if (down && left) return 5;
+  if (up && left) return 7;
+  if (up) return 0;
   if (right) return 2;
-  if (down)  return 4;
-  if (left)  return 6;
+  if (down) return 4;
+  if (left) return 6;
   return 8; 
 }
 
@@ -374,8 +350,10 @@ uint8_t read_piezo_hits() {
     int32_t delta = (int32_t)(result - result_ac[i]);
     last_deltas[i] = delta;
 
-    if (autoCalibRunning) {
-      // キャリブレーション中は指定センサーの入力を監視してピークを収集
+    // keyboard.h 由来の最大デルタ値記録[cite: 1]
+    if (delta > (long int)delta_max[i]) delta_max[i] = (uint16_t)delta;
+
+    if (autoCalibMode) {
       if (i == calibTargetSensor && delta > 20) {
         if (calibHitCount < 20) {
           calibMaxDeltas[calibHitCount] = delta;
@@ -383,6 +361,7 @@ uint8_t read_piezo_hits() {
         }
       }
     } else {
+      // PairDelayGate による高精度な判定エンジン[cite: 1]
       if (piezo_gate.accept((uint8_t)i, delta, main_timer, piezo_profile)) {
         hits |= (1 << i);
       }
@@ -395,23 +374,28 @@ uint8_t read_piezo_hits() {
 void displaySetting() {
   if (!oled_ok) return;
   display.clearDisplay();
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  if (autoCalibRunning) {
-    display.print("AUTO CAL [");
-    display.print(kandoNames[calibTargetSensor]);
-    display.println("]");
+  
+  if (autoCalibMode) {
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.println("--- AUTO CALIB ---");
+    display.setCursor(0, 16);
+    display.print("Target: ");
+    display.println(kandoNames[calibTargetSensor]);
     display.setTextSize(2);
-    display.setCursor(0, 24);
-    display.print("HIT: ");
+    display.setCursor(0, 36);
+    display.print("Hit:");
     display.print(calibHitCount);
     display.println("/20");
   } else {
-    display.println("SETTING (Up/Down:+- A:Next B:Cancel)");
-    display.setTextSize(2);
-    display.setCursor(0, 24);
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.println("--- SETTING ---");
+    display.setCursor(0, 16);
     display.print(kandoNames[currentSetting]);
-    display.print(":");
+    display.setTextSize(2);
+    display.setCursor(0, 36);
+    display.print(">");
     display.println(kando[currentSetting]);
   }
   display.display();
@@ -492,112 +476,10 @@ void send_keyboard_report(uint16_t s, uint8_t piezo_hits) {
     if (piezo_hits & (1 << i)) {
       uint8_t rep[8] = {0, 0, key_map[i], 0, 0, 0, 0, 0};
       usb_hid.sendReport(REPORT_ID_KEYBOARD, rep, sizeof(rep));
-      
-      Serial.print("HIT:");
-      Serial.println(i);
-
       delay(kando[7]);
       uint8_t empty[8] = {0};
       usb_hid.sendReport(REPORT_ID_KEYBOARD, empty, sizeof(empty));
     }
-  }
-
-  bool select_now = s & (1 << SNES_SELECT);
-  static bool last_select = false;
-  if (select_now && !last_select && !settingMode) {
-    settingMode = true;
-    currentSetting = 0; // 0番目からスタート（必要に応じて拡張可能）
-    autoCalibRunning = false;
-    displaySetting();
-    pixels.setPixelColor(0, pixels.Color(255, 0, 0));
-    pixels.show();
-  }
-  last_select = select_now;
-
-  if (settingMode) {
-    static bool last_up = false, last_down = false, last_a = false, last_b = false;
-    bool up_now   = s & (1 << SNES_UP);
-    bool down_now = s & (1 << SNES_DOWN);
-    bool a_now    = s & (1 << SNES_A);
-    bool b_now    = s & (1 << SNES_B);
-
-    if (autoCalibRunning) {
-      // キャリブレーション中は20回打鍵を監視。Aボタンで強制スキップ/完了も可
-      if (calibHitCount >= 20 || (a_now && !last_a)) {
-        // 最小・最大から最適な閾値を自動算出（例: 最小値の70%〜平均値付近）
-        int32_t minVal = 999999, maxVal = 0;
-        int validCnt = 0;
-        for (int h = 0; h < calibHitCount; h++) {
-          if (calibMaxDeltas[h] > 0) {
-            if (calibMaxDeltas[h] < minVal) minVal = calibMaxDeltas[h];
-            if (calibMaxDeltas[h] > maxVal) maxVal = calibMaxDeltas[h];
-            validCnt++;
-          }
-        }
-        if (validCnt >= 3) {
-          int recommended = minVal + (maxVal - minVal) / 4;
-          if (recommended < 15) recommended = 15;
-          kando[calibTargetSensor] = recommended; // 該当センサー(0~3)の閾値を自動更新
-        }
-
-        calibTargetSensor++;
-        if (calibTargetSensor >= 4) {
-          // 4面すべて完了
-          autoCalibRunning = false;
-          settingMode = false;
-          saveSettings();
-          pixels.setPixelColor(0, pixels.Color(0, 255, 0));
-          pixels.show();
-        } else {
-          calibHitCount = 0;
-          displaySetting();
-        }
-      }
-      if (b_now && !last_b) {
-        autoCalibRunning = false; // キャンセルして通常設定に戻る
-        displaySetting();
-      }
-    } else {
-      // 通常設定モード
-      if (up_now && !last_up) { 
-        if (currentSetting == 0 && kando[currentSetting] >= 250) {
-          // 例として特殊切替を設けるか、通常通りインクリメント
-        }
-        kando[currentSetting]++; 
-        displaySetting(); 
-      }
-      if (down_now && !last_down) { kando[currentSetting]--; displaySetting(); }
-      if (b_now && !last_b) { 
-        settingMode = false; 
-        pixels.setPixelColor(0, pixels.Color(0, 255, 0)); 
-        pixels.show(); 
-      }
-      if (a_now && !last_a) {
-        // もし最初の項目の位置などで自動キャリブレーションを起動させたい場合、
-        // あるいは専用のメニュー項目を作る場合の分岐
-        if (currentSetting == 0) {
-          // 例: L_EDGEでAを押したら自動キャリブレーション開始にするか、
-          // あるいは独立した項目にする。今回は「currentSetting == 0 (L_EDGE)」のときにA二度押し等で入れるように拡張可能。
-        }
-        currentSetting++;
-        if (currentSetting >= KANDO_COUNT) {
-          currentSetting = 0;
-          settingMode = false;
-          saveSettings();
-          pixels.setPixelColor(0, pixels.Color(0, 255, 0));
-          pixels.show();
-        } else {
-          displaySetting();
-        }
-      }
-    }
-    last_up = up_now; last_down = down_now; last_a = a_now; last_b = b_now;
-    return; 
-  }
-
-  if (suppress_normal_until_release) {
-    if (!(s & (1 << SNES_A)) && !(s & (1 << SNES_B))) suppress_normal_until_release = false;
-    else return;
   }
 }
 
@@ -613,6 +495,113 @@ void loop() {
   if (!usb_hid.ready()) { delay(1); return; }
 
   uint16_t s = readSNES();
+
+  // SELECTボタンの長押し・短押し検知
+  static bool last_select = false;
+  static uint32_t select_press_start = 0;
+  static bool long_press_handled = false;
+  bool select_now = s & (1 << SNES_SELECT);
+
+  if (select_now && !last_select) {
+    select_press_start = millis();
+    long_press_handled = false;
+  } else if (select_now && last_select) {
+    if (!long_press_handled && !settingMode && !autoCalibMode && (millis() - select_press_start > 1000)) {
+      autoCalibMode = true;
+      calibTargetSensor = 0;
+      calibHitCount = 0;
+      long_press_handled = true;
+      displaySetting();
+      pixels.setPixelColor(0, pixels.Color(255, 200, 0)); // 黄色：自動調整中
+      pixels.show();
+    }
+  } else if (!select_now && last_select) {
+    if (!long_press_handled && !settingMode && !autoCalibMode) {
+      settingMode = true;
+      currentSetting = 0;
+      displaySetting();
+      pixels.setPixelColor(0, pixels.Color(255, 0, 0)); // 赤：通常設定中
+      pixels.show();
+    }
+  }
+  last_select = select_now;
+
+  // 通常設定モードの処理
+  if (settingMode) {
+    static bool last_up = false, last_down = false, last_a = false, last_b = false;
+    bool up_now   = s & (1 << SNES_UP);
+    bool down_now = s & (1 << SNES_DOWN);
+    bool a_now    = s & (1 << SNES_A);
+    bool b_now    = s & (1 << SNES_B);
+
+    if (up_now && !last_up)     { kando[currentSetting]++; displaySetting(); }
+    if (down_now && !last_down) { kando[currentSetting]--; displaySetting(); }
+    if (b_now && !last_b) { 
+      settingMode = false; 
+      pixels.setPixelColor(0, pixels.Color(0, 255, 0)); 
+      pixels.show(); 
+    }
+    if (a_now && !last_a) {
+      currentSetting++;
+      if (currentSetting >= KANDO_COUNT) {
+        currentSetting = 0;
+        settingMode = false;
+        saveSettings();
+        pixels.setPixelColor(0, pixels.Color(0, 255, 0));
+        pixels.show();
+      } else {
+        displaySetting();
+      }
+    }
+    last_up = up_now; last_down = down_now; last_a = a_now; last_b = b_now;
+    return; 
+  }
+
+  // 自動調整モードの処理
+  if (autoCalibMode) {
+    static bool last_a = false, last_b = false;
+    bool a_now = s & (1 << SNES_A);
+    bool b_now = s & (1 << SNES_B);
+
+    if (calibHitCount >= 20 || (a_now && !last_a)) {
+      int32_t minVal = 999999, maxVal = 0;
+      int validCnt = 0;
+      for (int h = 0; h < calibHitCount; h++) {
+        if (calibMaxDeltas[h] > 0) {
+          if (calibMaxDeltas[h] < minVal) minVal = calibMaxDeltas[h];
+          if (calibMaxDeltas[h] > maxVal) maxVal = calibMaxDeltas[h];
+          validCnt++;
+        }
+      }
+      if (validCnt >= 3) {
+        int recommended = minVal + (maxVal - minVal) / 4;
+        if (recommended < 15) recommended = 15;
+        kando[calibTargetSensor] = recommended; 
+      }
+
+      calibTargetSensor++;
+      calibHitCount = 0;
+      
+      if (calibTargetSensor >= 4) {
+        autoCalibMode = false;
+        saveSettings();
+        pixels.setPixelColor(0, pixels.Color(0, 255, 0));
+        pixels.show();
+      } else {
+        displaySetting();
+      }
+    }
+    
+    if (b_now && !last_b) {
+      autoCalibMode = false;
+      pixels.setPixelColor(0, pixels.Color(0, 255, 0));
+      pixels.show();
+    }
+    
+    last_a = a_now; last_b = b_now;
+    return;
+  }
+
   uint8_t piezo_hits = read_piezo_hits();
 
   static uint8_t piezo_hold = 0;
