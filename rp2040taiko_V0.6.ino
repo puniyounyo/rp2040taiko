@@ -331,6 +331,10 @@ uint8_t calcHat(bool up, bool down, bool left, bool right) {
   return 8; 
 }
 
+// 二段階指数平滑化フィルター（Cascade EMA）用のバッファ
+static float ema1[4] = {0};
+static float ema2[4] = {0};
+
 uint8_t read_piezo_hits() {
   static uint64_t last_sample_us = 0;
   uint64_t now_us = to_us_since_boot(get_absolute_time());
@@ -341,13 +345,22 @@ uint8_t read_piezo_hits() {
   uint32_t main_timer = (uint32_t)millis();
   uint8_t hits = 0;
 
-  const int32_t NOISE_FLOOR = 55; // ノイズフロアカット
+  const int32_t NOISE_FLOOR = 25; // フィルター後のクリーンなノイズガード
 
   for (int i = 0; i < 4; i++) {
     adc_select_input(3 - i); 
-    long int result = adc_read();
-    int32_t raw_delta = (int32_t)(result - result_ac[i]);
-    result_ac[i] = result;
+    float raw_adc = (float)adc_read();
+
+    // 1段階目 EMA
+    if (ema1[i] == 0) ema1[i] = raw_adc;
+    ema1[i] = (ema1[i] * 0.6f) + (raw_adc * 0.4f);
+
+    // 2段階目 EMA
+    if (ema2[i] == 0) ema2[i] = ema1[i];
+    ema2[i] = (ema2[i] * 0.5f) + (ema1[i] * 0.5f);
+
+    int32_t raw_delta = (int32_t)(ema2[i] - (float)result_ac[i]);
+    result_ac[i] = (long int)ema2[i];
 
     int32_t delta = 0;
     if (raw_delta > NOISE_FLOOR) {
@@ -464,7 +477,7 @@ void serial_task(void) {
     Serial.print(last_deltas[1]); Serial.print(",");
     Serial.print(last_deltas[2]); Serial.print(",");
     Serial.println(last_deltas[3]);
-    delay(30);
+    delay(30); // ブラウザ描画落ち防止の間引きウェイト
   }
 }
 
@@ -493,7 +506,6 @@ void loop() {
 
   uint16_t s = readSNES();
 
-  // --- SELECTボタン短押しで「手動設定モード（赤LED）」へ切り替え ---
   static bool prev_select = false;
   bool now_select = (s & (1 << SNES_SELECT)) != 0;
 
@@ -502,7 +514,7 @@ void loop() {
     if (settingMode) {
       currentSetting = 0;
       displaySetting();
-      pixels.setPixelColor(0, pixels.Color(255, 0, 0)); // 赤：手動設定中
+      pixels.setPixelColor(0, pixels.Color(255, 0, 0));
       pixels.show();
       Serial.println("--- MANUAL SETTING MODE ENTERED ---");
       Serial.print("[SETTING] Current -> Index 0 [");
@@ -518,7 +530,6 @@ void loop() {
   }
   prev_select = now_select;
 
-  // 手動設定モード中の操作
   if (settingMode) {
     static bool last_up = false, last_down = false, last_a = false, last_b = false;
     bool up_now   = (s & (1 << SNES_UP)) != 0;
