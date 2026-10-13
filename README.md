@@ -12,6 +12,7 @@ RP2040-Zeroを使用した Nintendo Switch / PC 対応の太鼓コントロー�
 - EEPROM設定保存対応
 - Webモニター対応
 - Web経由の感度調整対応
+- https://puniyounyo.github.io/rp2040taiko/taiko_control.html
 - RAWデータ出力対応
 - 自動キャリブレーション対応
 
