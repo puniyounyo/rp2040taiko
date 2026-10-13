@@ -40,7 +40,6 @@ uint8_t key_map[4] = {HID_KEY_D, HID_KEY_F, HID_KEY_J, HID_KEY_K};
 bool switchMode = true;
 bool oled_ok = false;
 bool settingMode = false;
-bool autoCalibMode = false; 
 int currentSetting = 0;
 bool raw_debug_mode = false;
 
@@ -186,11 +185,6 @@ private:
 
 PairDelayGate piezo_gate;
 CalibrationProfile piezo_profile;
-
-int calibTargetSensor = 0;      
-int calibHitCount = 0;          
-int32_t calibSensorMax[4][20];  
-int32_t calibCrosstalkMax[4];  
 
 uint8_t const desc_hid_report[] = {
   0x05, 0x01,      0x09, 0x05,      0xA1, 0x01,      
@@ -347,38 +341,29 @@ uint8_t read_piezo_hits() {
   uint32_t main_timer = (uint32_t)millis();
   uint8_t hits = 0;
 
+  const int32_t NOISE_FLOOR = 55; // ノイズフロアカット
+
   for (int i = 0; i < 4; i++) {
     adc_select_input(3 - i); 
     long int result = adc_read();
-    int32_t delta = (int32_t)(result - result_ac[i]);
-    last_deltas[i] = delta;
+    int32_t raw_delta = (int32_t)(result - result_ac[i]);
+    result_ac[i] = result;
 
+    int32_t delta = 0;
+    if (raw_delta > NOISE_FLOOR) {
+      delta = raw_delta - NOISE_FLOOR;
+    } else if (raw_delta < -NOISE_FLOOR) {
+      delta = (-raw_delta) - NOISE_FLOOR; 
+    }
+
+    last_deltas[i] = delta;
     if (delta > (long int)delta_max[i]) delta_max[i] = (uint16_t)delta;
 
-    if (autoCalibMode) {
-      if (i == calibTargetSensor && delta > 20) {
-        if (calibHitCount < 20) {
-          calibSensorMax[calibTargetSensor][calibHitCount] = delta;
-          Serial.print("[CALIB] Target: ");
-          Serial.print(kandoNames[calibTargetSensor]);
-          Serial.print(" | Hit #");
-          Serial.print(calibHitCount + 1);
-          Serial.print(" | Delta: ");
-          Serial.println(delta);
-          calibHitCount++;
-        }
-      }
-      if (calibHitCount > 0 && calibHitCount <= 20 && i != calibTargetSensor) {
-        if (delta > calibCrosstalkMax[calibTargetSensor]) {
-          calibCrosstalkMax[calibTargetSensor] = delta;
-        }
-      }
-    } else {
+    if (!settingMode) {
       if (piezo_gate.accept((uint8_t)i, delta, main_timer, piezo_profile)) {
         hits |= (1 << i);
       }
     }
-    result_ac[i] = result;
   }
   return hits;
 }
@@ -386,30 +371,15 @@ uint8_t read_piezo_hits() {
 void displaySetting() {
   if (!oled_ok) return;
   display.clearDisplay();
-  
-  if (autoCalibMode) {
-    display.setTextSize(1);
-    display.setCursor(0, 0);
-    display.println("--- GOD CALIB ---");
-    display.setCursor(0, 16);
-    display.print("Target: ");
-    display.println(kandoNames[calibTargetSensor]);
-    display.setTextSize(2);
-    display.setCursor(0, 36);
-    display.print("Hit:");
-    display.print(calibHitCount);
-    display.println("/20");
-  } else {
-    display.setTextSize(1);
-    display.setCursor(0, 0);
-    display.println("--- SETTING ---");
-    display.setCursor(0, 16);
-    display.print(kandoNames[currentSetting]);
-    display.setTextSize(2);
-    display.setCursor(0, 36);
-    display.print(">");
-    display.println(kando[currentSetting]);
-  }
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.println("--- MANUAL SETTING ---");
+  display.setCursor(0, 16);
+  display.print(kandoNames[currentSetting]);
+  display.setTextSize(2);
+  display.setCursor(0, 36);
+  display.print(">");
+  display.println(kando[currentSetting]);
   display.display();
 }
 
@@ -451,9 +421,12 @@ void process_serial_line(const char *line) {
     }
     Serial.println("OK:SENS");
   } else if (strcmp(buf, "GETS") == 0) {
+    Serial.println("--- CURRENT KANDO PARAMETERS ---");
     for (int i = 0; i < KANDO_COUNT; i++) {
       Serial.print(i);
-      Serial.print(":");
+      Serial.print(" [");
+      Serial.print(kandoNames[i]);
+      Serial.print("]: ");
       Serial.println(kando[i]);
     }
     Serial.println("OK:GETS");
@@ -491,7 +464,7 @@ void serial_task(void) {
     Serial.print(last_deltas[1]); Serial.print(",");
     Serial.print(last_deltas[2]); Serial.print(",");
     Serial.println(last_deltas[3]);
-    delay(15);
+    delay(30);
   }
 }
 
@@ -520,43 +493,32 @@ void loop() {
 
   uint16_t s = readSNES();
 
+  // --- SELECTボタン短押しで「手動設定モード（赤LED）」へ切り替え ---
   static bool prev_select = false;
-  static uint32_t select_hold_start = 0;
-  static bool action_triggered = false;
   bool now_select = (s & (1 << SNES_SELECT)) != 0;
 
   if (now_select && !prev_select) {
-    select_hold_start = millis();
-    action_triggered = false;
-  } else if (now_select && prev_select) {
-    if (!action_triggered && !settingMode && !autoCalibMode) {
-      if (millis() - select_hold_start >= 1000) {
-        autoCalibMode = true;
-        calibTargetSensor = 0;
-        calibHitCount = 0;
-        memset(calibCrosstalkMax, 0, sizeof(calibCrosstalkMax));
-        action_triggered = true;
-        displaySetting();
-        pixels.setPixelColor(0, pixels.Color(255, 200, 0));
-        pixels.show();
-
-        Serial.println("=== GOD CALIBRATION STARTED ===");
-        Serial.print("Target Sensor [0]: ");
-        Serial.println(kandoNames[calibTargetSensor]);
-      }
-    }
-  } else if (!now_select && prev_select) {
-    if (!action_triggered && !settingMode && !autoCalibMode) {
-      settingMode = true;
+    settingMode = !settingMode;
+    if (settingMode) {
       currentSetting = 0;
-      action_triggered = true;
       displaySetting();
-      pixels.setPixelColor(0, pixels.Color(255, 0, 0));
+      pixels.setPixelColor(0, pixels.Color(255, 0, 0)); // 赤：手動設定中
       pixels.show();
+      Serial.println("--- MANUAL SETTING MODE ENTERED ---");
+      Serial.print("[SETTING] Current -> Index 0 [");
+      Serial.print(kandoNames[currentSetting]);
+      Serial.print("]: ");
+      Serial.println(kando[currentSetting]);
+    } else {
+      saveSettings();
+      pixels.setPixelColor(0, switchMode ? pixels.Color(0, 0, 255) : pixels.Color(0, 255, 0));
+      pixels.show();
+      Serial.println("[SETTING] Saved & Exited to Normal Mode.");
     }
   }
   prev_select = now_select;
 
+  // 手動設定モード中の操作
   if (settingMode) {
     static bool last_up = false, last_down = false, last_a = false, last_b = false;
     bool up_now   = (s & (1 << SNES_UP)) != 0;
@@ -564,98 +526,52 @@ void loop() {
     bool a_now    = (s & (1 << SNES_A)) != 0;
     bool b_now    = (s & (1 << SNES_B)) != 0;
 
-    if (up_now && !last_up)     { kando[currentSetting]++; displaySetting(); }
-    if (down_now && !last_down) { kando[currentSetting]--; displaySetting(); }
-    if (b_now && !last_b) { 
-      settingMode = false; 
-      pixels.setPixelColor(0, pixels.Color(0, 255, 0)); 
-      pixels.show(); 
+    if (up_now && !last_up) { 
+      kando[currentSetting]++; 
+      displaySetting(); 
+      Serial.print("[SETTING] ");
+      Serial.print(kandoNames[currentSetting]);
+      Serial.print(" = ");
+      Serial.println(kando[currentSetting]);
     }
+    if (down_now && !last_down) { 
+      kando[currentSetting]--; 
+      displaySetting(); 
+      Serial.print("[SETTING] ");
+      Serial.print(kandoNames[currentSetting]);
+      Serial.print(" = ");
+      Serial.println(kando[currentSetting]);
+    }
+    
     if (a_now && !last_a) {
       currentSetting++;
       if (currentSetting >= KANDO_COUNT) {
         currentSetting = 0;
         settingMode = false;
         saveSettings();
-        pixels.setPixelColor(0, pixels.Color(0, 255, 0));
+        pixels.setPixelColor(0, switchMode ? pixels.Color(0, 0, 255) : pixels.Color(0, 255, 0));
         pixels.show();
+        Serial.println("[SETTING] Completed & Saved to EEPROM.");
       } else {
         displaySetting();
+        Serial.print("[SETTING] Next -> Index ");
+        Serial.print(currentSetting);
+        Serial.print(" [");
+        Serial.print(kandoNames[currentSetting]);
+        Serial.print("]: ");
+        Serial.println(kando[currentSetting]);
       }
     }
+    if (b_now && !last_b) {
+      settingMode = false;
+      saveSettings();
+      pixels.setPixelColor(0, switchMode ? pixels.Color(0, 0, 255) : pixels.Color(0, 255, 0));
+      pixels.show();
+      Serial.println("[SETTING] Saved & Exited via B Button.");
+    }
+    
     last_up = up_now; last_down = down_now; last_a = a_now; last_b = b_now;
     return; 
-  }
-
-  if (autoCalibMode) {
-    static bool last_a = false, last_b = false;
-    bool a_now = (s & (1 << SNES_A)) != 0;
-    bool b_now = (s & (1 << SNES_B)) != 0;
-
-    uint8_t hit_detected = read_piezo_hits();
-
-    if (calibHitCount >= 20 || (a_now && !last_a)) {
-      int32_t minVal = 999999, maxVal = 0;
-      int validCnt = 0;
-      for (int h = 0; h < calibHitCount; h++) {
-        if (calibSensorMax[calibTargetSensor][h] > 0) {
-          if (calibSensorMax[calibTargetSensor][h] < minVal) minVal = calibSensorMax[calibTargetSensor][h];
-          if (calibSensorMax[calibTargetSensor][h] > maxVal) maxVal = calibSensorMax[calibTargetSensor][h];
-          validCnt++;
-        }
-      }
-      if (validCnt >= 3) {
-        int recommended = minVal + (maxVal - minVal) / 4;
-        if (recommended < 15) recommended = 15;
-        kando[calibTargetSensor] = recommended; 
-      }
-
-      calibTargetSensor++;
-      calibHitCount = 0;
-      
-      if (calibTargetSensor >= 4) {
-        int maxCross = 0;
-        for (int i = 0; i < 4; i++) {
-          if (calibCrosstalkMax[i] > maxCross) maxCross = calibCrosstalkMax[i];
-        }
-        int calculatedGuard = 25 + (maxCross / 10);
-        if (calculatedGuard > 60) calculatedGuard = 60;
-
-        kando[6]  = calculatedGuard; // CROSS_IG
-        kando[10] = calculatedGuard; // FACE_LR
-        kando[11] = calculatedGuard; // EDGE_LR
-
-        autoCalibMode = false;
-        saveSettings();
-        pixels.setPixelColor(0, pixels.Color(0, 255, 0));
-        pixels.show();
-
-        Serial.println("=== GOD CALIBRATION COMPLETED ===");
-        Serial.print("New Thresholds -> L_EDGE:"); Serial.print(kando[0]);
-        Serial.print(", L_FACE:"); Serial.print(kando[1]);
-        Serial.print(", R_FACE:"); Serial.print(kando[2]);
-        Serial.print(", R_EDGE:"); Serial.println(kando[3]);
-        Serial.print("Calculated Guard (CROSS/LR): ");
-        Serial.println(calculatedGuard);
-        Serial.println("Settings saved to EEPROM.");
-
-      } else {
-        displaySetting();
-        Serial.print("-> Next Target Sensor [");
-        Serial.print(calibTargetSensor);
-        Serial.print("]: ");
-        Serial.println(kandoNames[calibTargetSensor]);
-      }
-    }
-    
-    if (b_now && !last_b) {
-      autoCalibMode = false;
-      pixels.setPixelColor(0, pixels.Color(0, 255, 0));
-      pixels.show();
-    }
-    
-    last_a = a_now; last_b = b_now;
-    return;
   }
 
   uint8_t piezo_hits = read_piezo_hits();
