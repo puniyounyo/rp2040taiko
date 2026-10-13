@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Taiko Raw Data Logger & Configurator</title>
+  <style>
+    body { font-family: sans-serif; max-width: 650px; margin: 20px auto; padding: 20px; background: #f4f4f9; }
+    h2, h3 { color: #333; margin-top: 0; }
+    .section { background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 15px; }
+    .param-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    label { font-weight: bold; font-size: 13px; }
+    input[type="number"] { width: 70px; padding: 4px; font-size: 13px; }
+    button { padding: 8px 12px; font-size: 13px; cursor: pointer; border: none; border-radius: 4px; background: #007bff; color: white; margin-right: 5px; margin-bottom: 5px; }
+    button:hover { background: #0056b3; }
+    button.danger { background: #dc3545; }
+    button.danger:hover { background: #bd2130; }
+    
+    .monitor-container { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
+    .pad { background: #e9ecef; border: 2px solid #ced4da; border-radius: 6px; text-align: center; padding: 15px 5px; font-weight: bold; font-size: 14px; color: #6c757d; }
+    .pad.active { background: #ffc107; border-color: #ff9800; color: #000; transform: scale(1.05); }
+    .pad.edge { background-color: #e3f2fd; border-color: #90caf9; color: #1565c0; }
+    .pad.edge.active { background-color: #2196f3; color: #fff; border-color: #0d47a1; }
+    .pad.face { background-color: #ffebee; border-color: #ef9a9a; color: #c62828; }
+    .pad.face.active { background-color: #f44336; color: #fff; border-color: #b71c1c; }
+
+    textarea { width: 100%; height: 120px; font-family: monospace; font-size: 11px; padding: 8px; box-sizing: border-box; margin-top: 5px; }
+    #log { white-space: pre-wrap; background: #222; color: #0f0; padding: 10px; border-radius: 4px; height: 60px; overflow-y: auto; font-family: monospace; font-size: 11px; margin-top: 10px;}
+  </style>
+</head>
+<body>
+
+  <h2>Taiko Analyzer & Configurator</h2>
+  
+  <div class="section">
+    <button id="connectBtn">デバイスに接続</button>
+    <button id="getBtn">設定を読み込む (GETS)</button>
+    <button id="saveBtn">EEPROMに保存 (SAVE)</button>
+  </div>
+
+  <div class="section">
+    <h3>打面リアルタイムモニター</h3>
+    <div class="monitor-container">
+      <div id="pad_0" class="pad edge">左カ<br><span style="font-size:10px;">L_EDGE</span></div>
+      <div id="pad_1" class="pad face">左ドン<br><span style="font-size:10px;">L_FACE</span></div>
+      <div id="pad_2" class="pad face">右ドン<br><span style="font-size:10px;">R_FACE</span></div>
+      <div id="pad_3" class="pad edge">右カ<br><span style="font-size:10px;">R_EDGE</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>📊 AI解析用 生データロガー</h3>
+    <p style="font-size: 12px; color: #666; margin-top:0;">「録音開始」を押して特定の場所（例: 右ドン）を何度か叩いた後、データをコピーして私に貼り付けてください。</p>
+    <button id="recordBtn" class="danger">生データの記録を開始 (3秒間)</button>
+    <textarea id="rawLogOutput" placeholder="ここにキャプチャされた生データが出力されます..."></textarea>
+  </div>
+
+  <div class="section">
+    <h3>パラメータ調整</h3>
+    <div id="controls"></div>
+  </div>
+
+  <div id="log"></div>
+
+  <script>
+    let port, reader, writer;
+    let isRecording = false;
+    let capturedData = "";
+
+    const kandoNames = [
+      "L_EDGE", "L_FACE", "R_FACE", "R_EDGE", "NEXT_B",
+      "EDGE_C", "IGNORE_D", "HOLD_MS", "SGL_A", "SGL_AE",
+      "FACE_LR", "EDGE_LR"
+    ];
+
+    const controlsDiv = document.getElementById('controls');
+    const logDiv = document.getElementById('log');
+    const rawOutput = document.getElementById('rawLogOutput');
+
+    kandoNames.forEach((name, index) => {
+      const row = document.createElement('div');
+      row.className = 'param-row';
+      row.innerHTML = `<label>${index}: ${name}</label><input type="number" id="param_${index}" value="0">`;
+      controlsDiv.appendChild(row);
+    });
+
+    function log(text) {
+      logDiv.textContent += text + "\n";
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    document.getElementById('connectBtn').addEventListener('click', async () => {
+      try {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });
+        log("接続成功！");
+        readLoop();
+        setTimeout(getSettings, 500);
+      } catch (err) {
+        log("接続エラー: " + err);
+      }
+    });
+
+    document.getElementById('getBtn').addEventListener('click', getSettings);
+    document.getElementById('saveBtn').addEventListener('click', () => sendCommand("SAVE\n"));
+
+    document.getElementById('recordBtn').addEventListener('click', async () => {
+      if (!port) { alert("先に接続してください"); return; }
+      rawOutput.value = "データを収集中... 実際にパッドを叩いてください！";
+      capturedData = "";
+      isRecording = true;
+      await sendCommand("RAWON\n");
+
+      setTimeout(async () => {
+        isRecording = false;
+        await sendCommand("RAWOFF\n");
+        rawOutput.value = capturedData || "データが取得できませんでした。";
+      }, 3000); // 3秒間キャプチャ
+    });
+
+    async function sendCommand(cmd) {
+      if (!port) return;
+      const encoder = new TextEncoder();
+      writer = port.writable.getWriter();
+      await writer.write(encoder.encode(cmd));
+      writer.releaseLock();
+    }
+
+    async function getSettings() {
+      await sendCommand("GETS\n");
+    }
+
+    async function readLoop() {
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (port.readable) {
+        reader = port.readable.getReader();
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let lines = buffer.split("\n");
+            buffer = lines.pop();
+            for (let line of lines) {
+              parseLine(line.trim());
+            }
+          }
+        } catch (error) {
+          log("読み込みエラー: " + error);
+        } finally {
+          reader.releaseLock();
+        }
+      }
+    }
+
+    let flashTimers = [null, null, null, null];
+    function triggerFlash(idx) {
+      const el = document.getElementById(`pad_${idx}`);
+      if (!el) return;
+      el.classList.add('active');
+      if (flashTimers[idx]) clearTimeout(flashTimers[idx]);
+      flashTimers[idx] = setTimeout(() => el.classList.remove('active'), 100);
+    }
+
+    function parseLine(line) {
+      if (isRecording) {
+        capturedData += line + "\n";
+      }
+
+      if (line.includes(":") && !line.startsWith("HIT") && !line.startsWith("RAW")) {
+        let parts = line.split(":");
+        let idx = parseInt(parts[0]);
+        let val = parseInt(parts[1]);
+        if (!isNaN(idx) && !isNaN(val) && idx >= 0 && idx < kandoNames.length) {
+          document.getElementById(`param_${idx}`).value = val;
+          return;
+        }
+      }
+
+      if (line.startsWith("HIT:")) {
+        let hitIdx = parseInt(line.split(":")[1]);
+        if (!isNaN(hitIdx)) triggerFlash(hitIdx);
+      }
+    }
+
+    kandoNames.forEach((name, index) => {
+      document.getElementById(`param_${index}`).addEventListener('change', async (e) => {
+        let cmd = `SENS:${index}=${e.target.value}\n`;
+        await sendCommand(cmd);
+        log(`送信: ${cmd.trim()}`);
+      });
+    });
+  </script>
+</body>
+</html>
