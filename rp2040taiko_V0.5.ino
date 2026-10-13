@@ -517,7 +517,7 @@ void loop() {
       autoCalibMode = true;
       calibTargetSensor = 0;
       calibHitCount = 0;
-      memset(calibCrosstallsMax, 0, sizeof(calibCrosstalkMax));
+      memset(calibCrosstalkMax, 0, sizeof(calibCrosstalkMax));
       long_press_handled = true;
       displaySetting();
       pixels.setPixelColor(0, pixels.Color(255, 200, 0)); // 黄色：神自動調整中
