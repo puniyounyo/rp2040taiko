@@ -1,4 +1,3 @@
-<img width="414" height="2268" alt="image" src="https://github.com/user-attachments/assets/08393728-3265-4038-9b64-d371a6d8d9c9" /># RP2040 Taiko Controller
 
 RP2040-Zeroを使用したNintendo Switch向け太鼓コントローラー変換基板です。
 
