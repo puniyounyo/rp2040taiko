@@ -44,27 +44,27 @@ bool autoCalibMode = false;
 int currentSetting = 0;
 bool raw_debug_mode = false;
 
-// keyboard.h 準拠の洗練されたパラメータ配列（12項目）
+// 12項目の精鋭パラメータ
 #define KANDO_COUNT 12
 int kando[KANDO_COUNT] = {
-    80,  // 0: L_EDGE 感度
-    160, // 1: L_FACE 感度
-    160, // 2: R_FACE 感度
-    80,  // 3: R_EDGE 感度
-    30,  // 4: FACE_INTV (面が入力された際の次の入力受付時間 B)
-    12,  // 5: EDGE_INTV (縁の入力受付時間 C)
-    35,  // 6: CROSS_IG (面入力時に縁を無視する時間 D)
-    0,   // 7: HOLD_MS (入力保持時間 H)
-    0,   // 8: FACE_SGL (面の単体入力受付時間 A)
-    0,   // 9: EDGE_SGL (縁の単体入力受付時間 A_edge)
-    25,  // 10: 予備・ペア遅延用
-    1    // 11: 予備・モード切替用
+    80,  // [0] L_EDGE
+    160, // [1] L_FACE
+    160, // [2] R_FACE
+    80,  // [3] R_EDGE
+    30,  // [4] FACE_INTV
+    12,  // [5] EDGE_INTV
+    35,  // [6] CROSS_IG (異系統ガード)
+    0,   // [7] HOLD_MS
+    0,   // [8] FACE_SGL
+    0,   // [9] EDGE_SGL
+    40,  // [10] FACE_LR (左右面ガード)
+    40   // [11] EDGE_LR (左右縁ガード)
 };
 
 const char *kandoNames[KANDO_COUNT] = {
     "L_EDGE", "L_FACE", "R_FACE", "R_EDGE", "FACE_INTV",
     "EDGE_INTV", "CROSS_IG", "HOLD_MS", "FACE_SGL", "EDGE_SGL",
-    "PARAM_10", "PARAM_11"
+    "FACE_LR", "EDGE_LR"
 };
 #define EEPROM_SIZE 16
 
@@ -87,11 +87,10 @@ const char *kandoNames[KANDO_COUNT] = {
 
 long int result_ac[4] = {0, 0, 0, 0};
 int32_t last_deltas[4] = {0, 0, 0, 0};
-uint16_t delta_max[4] = {0}; // keyboard.h 由来のピーク監視用[cite: 1]
+uint16_t delta_max[4] = {0};
 
 #define CAL_ROUTE_COUNT 12
 
-// keyboard.h 由来の高度なPairDelayGateおよびプロファイル構造[cite: 1]
 struct CalibrationProfile {
   uint16_t threshold[4];
   uint16_t self_face_b;   
@@ -124,17 +123,21 @@ void build_profile_from_kando(CalibrationProfile &p) {
     for (uint8_t t = 0; t < 4; t++) {
       uint8_t route = cal_route_index(s, t);
       if (route == 0xFF) continue;
+      
       if (!cal_same_type(s, t)) {
-        p.pair_delay_ms[route] = (uint16_t)kando[6];
+        p.pair_delay_ms[route] = (uint16_t)kando[6]; // CROSS_IG
+      } else {
+        if (s != t) {
+          bool is_face = (s == 1 || s == 2);
+          if (is_face) {
+            p.pair_delay_ms[route] = (uint16_t)kando[10]; // FACE_LR
+          } else {
+            p.pair_delay_ms[route] = (uint16_t)kando[11]; // EDGE_LR
+          }
+        }
       }
     }
   }
-  uint8_t r_lr = cal_route_index(1, 2), r_rl = cal_route_index(2, 1);  
-  p.pair_delay_ms[r_lr] = (uint16_t)kando[10];
-  p.pair_delay_ms[r_rl] = (uint16_t)kando[10];
-  uint8_t r_le = cal_route_index(0, 3), r_el = cal_route_index(3, 0);  
-  p.pair_delay_ms[r_le] = (uint16_t)kando[10];
-  p.pair_delay_ms[r_el] = (uint16_t)kando[10];
 }
 
 class PairDelayGate {
@@ -175,19 +178,19 @@ public:
   }
 
 private:
-  uint32_t last_hit_ms_[4] = {0};
-  uint32_t last_face_ms_ = 0;
-  uint32_t last_edge_ms_ = 0;
-  uint8_t seen_mask_ = 0;
+    uint32_t last_hit_ms_[4] = {0};
+    uint32_t last_face_ms_ = 0;
+    uint32_t last_edge_ms_ = 0;
+    uint8_t seen_mask_ = 0;
 };
 
 PairDelayGate piezo_gate;
 CalibrationProfile piezo_profile;
 
-// 自動キャリブレーション用状態変数
-int calibTargetSensor = 0;      // 0:L_EDGE, 1:L_FACE, 2:R_FACE, 3:R_EDGE
-int calibHitCount = 0;          // 0〜20回
-int32_t calibMaxDeltas[20];     // ピーク値の記録
+int calibTargetSensor = 0;      
+int calibHitCount = 0;          
+int32_t calibSensorMax[4][20];  // 各センサーの打撃ピーク値記録
+int32_t calibCrosstalkMax[4];  // 叩いたときに他チャンネルへ漏れた最大値
 
 uint8_t const desc_hid_report[] = {
   0x05, 0x01,      0x09, 0x05,      0xA1, 0x01,      
@@ -258,13 +261,13 @@ void setup() {
     USBDevice.setProductDescriptor("POKKEN CONTROLLER");
     usb_hid.setReportDescriptor(desc_hid_report, sizeof(desc_hid_report));
     
-    pixels.setPixelColor(0, pixels.Color(0, 0, 255)); // 青：Switchモード
+    pixels.setPixelColor(0, pixels.Color(0, 0, 255));
     pixels.show();
   } else {
     USBDevice.setID(0xCAFE, 0x4004);
     usb_hid.setReportDescriptor(desc_hid_report_keyboard, sizeof(desc_hid_report_keyboard));
     
-    pixels.setPixelColor(0, pixels.Color(0, 255, 0)); // 緑：PCモード
+    pixels.setPixelColor(0, pixels.Color(0, 255, 0));
     pixels.show();
   }
 
@@ -350,18 +353,23 @@ uint8_t read_piezo_hits() {
     int32_t delta = (int32_t)(result - result_ac[i]);
     last_deltas[i] = delta;
 
-    // keyboard.h 由来の最大デルタ値記録[cite: 1]
     if (delta > (long int)delta_max[i]) delta_max[i] = (uint16_t)delta;
 
     if (autoCalibMode) {
+      // ターゲットセンサーへの打撃を検知（デルタ20以上）
       if (i == calibTargetSensor && delta > 20) {
         if (calibHitCount < 20) {
-          calibMaxDeltas[calibHitCount] = delta;
+          calibSensorMax[calibTargetSensor][calibHitCount] = delta;
           calibHitCount++;
         }
       }
+      // 打撃の瞬間に他チャンネルに漏れた振動（クロストーク）を同時に監視・記録
+      if (calibHitCount > 0 && calibHitCount < 20 && i != calibTargetSensor) {
+        if (delta > calibCrosstalkMax[calibTargetSensor]) {
+          calibCrosstalkMax[calibTargetSensor] = delta;
+        }
+      }
     } else {
-      // PairDelayGate による高精度な判定エンジン[cite: 1]
       if (piezo_gate.accept((uint8_t)i, delta, main_timer, piezo_profile)) {
         hits |= (1 << i);
       }
@@ -378,7 +386,7 @@ void displaySetting() {
   if (autoCalibMode) {
     display.setTextSize(1);
     display.setCursor(0, 0);
-    display.println("--- AUTO CALIB ---");
+    display.println("--- GOD CALIB ---");
     display.setCursor(0, 16);
     display.print("Target: ");
     display.println(kandoNames[calibTargetSensor]);
@@ -496,7 +504,6 @@ void loop() {
 
   uint16_t s = readSNES();
 
-  // SELECTボタンの長押し・短押し検知
   static bool last_select = false;
   static uint32_t select_press_start = 0;
   static bool long_press_handled = false;
@@ -510,9 +517,10 @@ void loop() {
       autoCalibMode = true;
       calibTargetSensor = 0;
       calibHitCount = 0;
+      memset(calibCrosstallsMax, 0, sizeof(calibCrosstalkMax));
       long_press_handled = true;
       displaySetting();
-      pixels.setPixelColor(0, pixels.Color(255, 200, 0)); // 黄色：自動調整中
+      pixels.setPixelColor(0, pixels.Color(255, 200, 0)); // 黄色：神自動調整中
       pixels.show();
     }
   } else if (!select_now && last_select) {
@@ -520,13 +528,12 @@ void loop() {
       settingMode = true;
       currentSetting = 0;
       displaySetting();
-      pixels.setPixelColor(0, pixels.Color(255, 0, 0)); // 赤：通常設定中
+      pixels.setPixelColor(0, pixels.Color(255, 0, 0));
       pixels.show();
     }
   }
   last_select = select_now;
 
-  // 通常設定モードの処理
   if (settingMode) {
     static bool last_up = false, last_down = false, last_a = false, last_b = false;
     bool up_now   = s & (1 << SNES_UP);
@@ -557,19 +564,20 @@ void loop() {
     return; 
   }
 
-  // 自動調整モードの処理
+  // 1周完結型・神自動キャリブレーションの終了・演算処理
   if (autoCalibMode) {
     static bool last_a = false, last_b = false;
     bool a_now = s & (1 << SNES_A);
     bool b_now = s & (1 << SNES_B);
 
     if (calibHitCount >= 20 || (a_now && !last_a)) {
+      // 1. 各センサーの感度（0〜3番）を算出
       int32_t minVal = 999999, maxVal = 0;
       int validCnt = 0;
       for (int h = 0; h < calibHitCount; h++) {
-        if (calibMaxDeltas[h] > 0) {
-          if (calibMaxDeltas[h] < minVal) minVal = calibMaxDeltas[h];
-          if (calibMaxDeltas[h] > maxVal) maxVal = calibMaxDeltas[h];
+        if (calibSensorMax[calibTargetSensor][h] > 0) {
+          if (calibSensorMax[calibTargetSensor][h] < minVal) minVal = calibSensorMax[calibTargetSensor][h];
+          if (calibSensorMax[calibTargetSensor][h] > maxVal) maxVal = calibSensorMax[calibTargetSensor][h];
           validCnt++;
         }
       }
@@ -582,10 +590,24 @@ void loop() {
       calibTargetSensor++;
       calibHitCount = 0;
       
+      // 4センサーすべて1周完了したら、漏れ具合からクロストークガード値を自動計算！
       if (calibTargetSensor >= 4) {
+        // 最大のクロストーク量を基準にガード値を決定（余裕を持たせる）
+        int maxCross = 0;
+        for (int i = 0; i < 4; i++) {
+          if (calibCrosstalkMax[i] > maxCross) maxCross = calibCrosstalkMax[i];
+        }
+        // 漏れが大きい環境ならガードを強めにする（下限25ms、上限60ms）
+        int calculatedGuard = 25 + (maxCross / 10);
+        if (calculatedGuard > 60) calculatedGuard = 60;
+
+        kando[6]  = calculatedGuard; // CROSS_IG
+        kando[10] = calculatedGuard; // FACE_LR
+        kando[11] = calculatedGuard; // EDGE_LR
+
         autoCalibMode = false;
         saveSettings();
-        pixels.setPixelColor(0, pixels.Color(0, 255, 0));
+        pixels.setPixelColor(0, pixels.Color(0, 255, 0)); // 緑：完了！
         pixels.show();
       } else {
         displaySetting();
