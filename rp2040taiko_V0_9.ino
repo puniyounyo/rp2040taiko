@@ -304,6 +304,49 @@ void saveSettings() {
   EEPROM.commit();
 }
 
+// ---------------- OLED表示 (128x64) ----------------
+// 文字を画面中央に寄せて表示する。size=2は1文字12px(最大10文字)、size=1は6px(最大21文字)
+void drawCentered(const char *txt, int y, int size) {
+  int16_t x1, y1;
+  uint16_t w, h;
+  display.setTextSize(size);
+  display.getTextBounds(txt, 0, y, &x1, &y1, &w, &h);
+  display.setCursor((SCREEN_WIDTH - (int)w) / 2, y);
+  display.print(txt);
+}
+
+// 通常画面(起動時と、設定モードから戻ったとき)
+void displayMode() {
+  if (!oled_ok) return;
+  bool sw = (currentUsbMode == MODE_SWITCH_TATACON);
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  drawCentered(sw ? "SW MODE" : "PC MODE", 12, 2);
+  drawCentered(sw ? "Switch Tatacon" : "Keyboard (D F J K)", 38, 1);
+  if (!sw) drawCentered("SELECT: SETTING", 54, 1);
+  display.display();
+}
+
+// 設定画面: 1行目に項目番号、2行目に項目名、3行目に値、最下段に0$301C255のバー
+void displaySetting() {
+  if (!oled_ok) return;
+  char title[24];
+  snprintf(title, sizeof(title), "SETTING %d/%d", currentSetting + 1, KANDO_COUNT);
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print(title);
+  drawCentered(kandoNames[currentSetting], 11, 2);
+  char val[8];
+  snprintf(val, sizeof(val), "%d", kando[currentSetting]);
+  drawCentered(val, 31, 3);
+  display.drawRect(0, 57, SCREEN_WIDTH, 7, SSD1306_WHITE);
+  int fill = (kando[currentSetting] * (SCREEN_WIDTH - 4)) / 255;
+  if (fill > 0) display.fillRect(2, 59, fill, 3, SSD1306_WHITE);
+  display.display();
+}
+
 void setup() {
   pixels.begin();
   pixels.setBrightness(30); 
@@ -364,28 +407,8 @@ void setup() {
   oled_ok = (Wire.endTransmission() == 0);
   if (oled_ok) {
     display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
-    display.clearDisplay();
-    display.setTextSize(2);
-    display.setTextColor(SSD1306_WHITE);
-    display.setCursor(0, 20);
-    display.println(currentUsbMode == MODE_SWITCH_TATACON ? "SW TATACON" : "PC KEYBOARD");
-    display.display();
+    displayMode();
   }
-}
-
-void displaySetting() {
-  if (!oled_ok) return;
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.println("--- MANUAL SETTING ---");
-  display.setCursor(0, 16);
-  display.print(kandoNames[currentSetting]);
-  display.setTextSize(2);
-  display.setCursor(0, 36);
-  display.print(">");
-  display.println(kando[currentSetting]);
-  display.display();
 }
 
 static char serial_line_buf[128] = {0};
@@ -468,6 +491,7 @@ void logSetting(const char *prefix) {
 void setLedNormal() {
   pixels.setPixelColor(0, currentUsbMode == MODE_SWITCH_TATACON ? pixels.Color(0, 0, 255) : pixels.Color(0, 255, 0));
   pixels.show();
+  displayMode(); // 設定モードから戻ったとき、OLEDも通常画面に戻す
 }
 
 void loop() {
