@@ -9,7 +9,7 @@
  *  - PCモードのSelect設定メニューを、OLEDとシリアルモニターの両方に表示するよう復活
  *  - Web用に打撃イベント "HIT:ch" を送信(PCモードのみ)。Webの打撃モニター/カウンターが反応する
  *  - RAW波形は delay() ではなく一定間隔(40ms)+区間ピーク保持で送信(送りすぎによる詰まりを防止)
- *  - 設定値は0〜255に制限(EEPROMは1バイト保存のため、範囲外は化けていた)
+ *  - 設定値は0$301C255に制限(EEPROMは1バイト保存のため、範囲外は化けていた)
  *  - 設定モード中も圧電のベースラインを更新(設定モード終了直後の誤検出を防止)
  *  - 設定モードはPCモードのみ(Switchモードでは Select は「-」ボタン)。ALLOW_SETTING_IN_SWITCH で変更可
  *  - 自動キャリブレーションは廃止
@@ -315,33 +315,35 @@ void drawCentered(const char *txt, int y, int size) {
   display.print(txt);
 }
 
+// 2色OLED(黄/青)の領域: 黄色 y=0$301C15(16ドット) / 隙間 y=16$301C19(発光しない) / 青色 y=20$301C63(44ドット)
+// 大きい文字(size2)は高さ16ドットなので、黄色の帯にちょうど1行収まる。色をまたがないよう配置する
+#define OLED_BLUE_Y 20
+
 // 通常画面(起動時と、設定モードから戻ったとき)
 void displayMode() {
   if (!oled_ok) return;
   bool sw = (currentUsbMode == MODE_SWITCH_TATACON);
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
-  drawCentered(sw ? "SW MODE" : "PC MODE", 12, 2);
-  drawCentered(sw ? "Switch Tatacon" : "Keyboard (D F J K)", 38, 1);
-  if (!sw) drawCentered("SELECT: SETTING", 54, 1);
+  drawCentered(sw ? "SW MODE" : "PC MODE", 0, 2);                       // 黄色の帯(y=0$301C15)
+  drawCentered(sw ? "Switch Tatacon" : "Keyboard (D F J K)", 26, 1);    // 青色(y=26$301C33)
+  if (!sw) drawCentered("SELECT: SETTING", 50, 1);                      // 青色(y=50$301C57)
   display.display();
 }
 
-// 設定画面: 1行目に項目番号、2行目に項目名、3行目に値、最下段に0$301C255のバー
+// 設定画面: 黄色=項目名(大) / 青色=項目番号・値(大)・0$301C255のバー
 void displaySetting() {
   if (!oled_ok) return;
   char title[24];
   snprintf(title, sizeof(title), "SETTING %d/%d", currentSetting + 1, KANDO_COUNT);
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.print(title);
-  drawCentered(kandoNames[currentSetting], 11, 2);
+  drawCentered(kandoNames[currentSetting], 0, 2);   // 黄色の帯(y=0$301C15)
+  drawCentered(title, OLED_BLUE_Y + 1, 1);          // 青色(y=21$301C28)
   char val[8];
   snprintf(val, sizeof(val), "%d", kando[currentSetting]);
-  drawCentered(val, 31, 3);
-  display.drawRect(0, 57, SCREEN_WIDTH, 7, SSD1306_WHITE);
+  drawCentered(val, 31, 3);                         // 青色(y=31$301C54)
+  display.drawRect(0, 57, SCREEN_WIDTH, 7, SSD1306_WHITE);   // 青色(y=57$301C63)
   int fill = (kando[currentSetting] * (SCREEN_WIDTH - 4)) / 255;
   if (fill > 0) display.fillRect(2, 59, fill, 3, SSD1306_WHITE);
   display.display();
@@ -535,7 +537,7 @@ void loop() {
     bool b_now    = (s & (1 << SNES_B)) != 0;
 
     if (up_now && !last_up) {
-      if (kando[currentSetting] < 255) kando[currentSetting]++;   // EEPROMは1バイト保存なので0〜255
+      if (kando[currentSetting] < 255) kando[currentSetting]++;   // EEPROMは1バイト保存なので0$301C255
       displaySetting();
       logSetting("[SETTING] UP   Index ");
     }
