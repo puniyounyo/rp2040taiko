@@ -1,4 +1,4 @@
-# RP2040 Taiko Controller
+[# RP2040 Taiko Controller
 
 RP2040-Zeroを使用した Nintendo Switch / PC 対応の太鼓コントローラー変換基板です。
 
@@ -7,7 +7,7 @@ RP2040-Zeroを使用した Nintendo Switch / PC 対応の太鼓コントロー�
 - SNES（SFC）純正コントローラー対応
 - ピエゾセンサー4ch入力対応
 - Nintendo Switchモード対応（ポッ拳コントローラー互換）
-- PCキーボードモード対応
+- PCキーボードモード対応k[](url)
 - OLED表示対応（任意）
 - EEPROM設定保存対応
 - Webモニター対応
@@ -161,3 +161,4 @@ RAWOFF
 - V0.3 : Webモニター対応版
 - V0.4 : Webキャリブレーション対応版
 - V0.5 : 神自動キャリブレーション対応版
+]([url]([url]([url]([url](archive[kkkkkkkk](url))))))
