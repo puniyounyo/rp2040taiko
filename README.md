@@ -1,4 +1,4 @@
-[# RP2040 Taiko Controller
+# RP2040 Taiko Controller
 
 RP2040-Zeroを使用した Nintendo Switch / PC 対応の太鼓コントローラー変換基板です。
 
@@ -7,14 +7,14 @@ RP2040-Zeroを使用した Nintendo Switch / PC 対応の太鼓コントロー�
 - SNES（SFC）純正コントローラー対応
 - ピエゾセンサー4ch入力対応
 - Nintendo Switchモード対応（ポッ拳コントローラー互換）
-- PCキーボードモード対応k[](url)
+- PCキーボードモード対応
 - OLED表示対応（任意）
 - EEPROM設定保存対応
 - Webモニター対応
 - Web経由の感度調整対応
 - https://puniyounyo.github.io/rp2040taiko/taiko_control.html
 - RAWデータ出力対応
-- 自動キャリブレーション対応
+- PC／Switch感度プロファイル分離（V1.0〜）
 
 ---
 
@@ -104,6 +104,12 @@ SENS:0=80:1=160:2=160:3=80
 SAVE
 ```
 
+### PCプロファイルをSwitchプロファイルへコピー（V1.0〜）
+
+```text
+COPY2SW
+```
+
 ### RAWデータ出力開始
 
 ```text
@@ -141,6 +147,15 @@ RAWOFF
 
 ---
 
+## リポジトリ構成
+
+- `rp2040taiko_V1.0.ino` : 現行版ファームウェア
+- `taiko_control.html` : Web設定＆モニター（GitHub Pagesで公開）
+- `3DModels/` : スペーサー類のSTL／F3D
+- `archive/` : 過去バージョン（V0.1〜V0.9）
+
+---
+
 ## 変更履歴
 
 | Version | 主な変更内容 |
@@ -150,6 +165,10 @@ RAWOFF
 | V0.3 | Webモニター対応。シリアル経由でヒット情報を取得可能に。 |
 | V0.4 | Web設定変更機能・RAWデータ出力機能・PairDelayGate判定を実装。 |
 | V0.5 | GOD CALIB（神自動キャリブレーション）を実装。感度・クロストーク対策値を自動算出しEEPROMへ自動保存。 |
+| V0.6 | キャリブレーション方式と表示ロジックを整理し、二段階EMA（Cascade EMA）フィルタを導入。 |
+| V0.7 | 「Ultimate」版として再構成。Switch／PCキーボード／Debugの3モード化、Smart Noise Gate＋EMA＋Pair Delayを検出構成として明示。 |
+| V0.8 | 反転マッピング版。物理ピン→論理チャンネルの反転（physical 0→logical 3）を明示し、パラメータ名を論理順（D/F/J/K）に統一。※ファイル内ヘッダーの版表記はv0.7のまま |
+| V0.9 | Switchモードでシリアルを完全停止して認識を安定化。HITイベント送信、RAW送信の40msピーク保持化、設定値の0〜255制限、設定モード中のベースライン更新。自動キャリブレーション廃止、設定モードはPCモードのみに。2色OLEDの色境界に合わせた表示配置に調整。 |
 | V1.0 | 検出を正方向デルタ方式へ回帰し、比率ゲート（CROSS_RATIO／JUDGE_WIN）を追加。PC／Switch感度プロファイル分離、Switchモードでの設定モード対応、Web設定ページの14項目対応。 |
 
 ---
@@ -161,4 +180,8 @@ RAWOFF
 - V0.3 : Webモニター対応版
 - V0.4 : Webキャリブレーション対応版
 - V0.5 : 神自動キャリブレーション対応版
-]([url]([url]([url]([url](archive[kkkkkkkk](url))))))
+- V0.6 : Cascade EMA・キャリブレーション整理版
+- V0.7 : Ultimate再構成版（3モード）
+- V0.8 : 反転マッピング版
+- V0.9 : Switch認識安定化版（シリアル完全停止）
+- V1.0 : 比率ゲート・プロファイル分離版（現行）
