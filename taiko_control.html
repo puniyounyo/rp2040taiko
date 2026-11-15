@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>太鼓コントローラー 設定 ＆ モニター (v0.9)</title>
+<title>太鼓コントローラー 設定 ＆ モニター (v1.0)</title>
 <style>
   body { font-family: sans-serif; background:#121212; color:#e0e0e0; margin:0; padding:10px 20px; box-sizing:border-box; }
   h1 { font-size: 20px; margin: 0 0 4px; color:#fff; border-bottom:2px solid #333; padding-bottom:4px; }
@@ -54,7 +54,7 @@
 </head>
 <body>
 <div class="container">
-  <h1>太鼓コントローラー 設定 ＆ モニター <small style="font-size:12px;color:#888;">v0.9</small></h1>
+  <h1>太鼓コントローラー 設定 ＆ モニター <small style="font-size:12px;color:#888;">v1.0</small></h1>
 
   <!-- デバイス接続 -->
   <div class="card" style="padding: 8px 14px;">
@@ -81,13 +81,16 @@
   <!-- パラメータ設定 -->
   <div class="card">
     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
-      <h2>パラメータ設定 (12項目)</h2>
+      <h2>パラメータ設定 (14項目)</h2>
       <div>
         <button id="get-btn" style="margin:0 4px 0 0;">読み込み (GETS)</button>
-        <button id="save-btn" class="success" style="margin:0;">EEPROM保存 (SAVE)</button>
+        <button id="save-btn" class="success" style="margin:0 4px 0 0;">EEPROM保存 (SAVE)</button>
+        <button id="copy2sw-btn" style="margin:0;">SWへコピー (COPY2SW)</button>
         <span id="dirty-label" style="color:#e67e22;font-weight:bold; margin-left:10px; font-size:12px;"></span>
       </div>
     </div>
+    <div class="note">接続中プロファイル: <span id="profile-label" style="color:#0ff;font-weight:bold;">-</span>（Web接続はPCモードのみ有効。PCで調整した値をSwitchでも使いたい場合は「SWへコピー」を押してください。Switch専用に変えたい値は、Switchモードで Select 長押しの設定モードから変更できます）</div>
+    <div class="note">誤検出対策の主役は 12: CROSS_RATIO と 13: JUDGE_WIN です。誤爆が多い→ CROSS_RATIO を上げる（70〜80）。正規の弱い打撃まで落ちる→ 下げる（40〜50）。JUDGE_WIN=0 で比率ゲートは無効（旧方式）になります。</div>
     <div class="param-grid" id="param-grid"></div>
   </div>
 
@@ -113,6 +116,8 @@
     { name:"EDGE_SGL",  desc:"同じ縁センサーの再入力間隔 (ms)" },
     { name:"FACE_LR",   desc:"左面⇔右面 追加遅延 (ms)" },
     { name:"EDGE_LR",   desc:"左縁⇔右縁 追加遅延 (ms)" },
+    { name:"CROSS_RATIO", desc:"比率ゲート: 最強ピークの何%未満をクロストークとして棄却 (%)", max:100 },
+    { name:"JUDGE_WIN",   desc:"判定収集ウィンドウ (ms)。0で比率ゲート無効", max:30 },
   ];
   const N = PARAMS.length;
   const SENSORS = [
@@ -222,7 +227,7 @@
   // ---------- パラメータUI ----------
   const grid = document.getElementById('param-grid');
   const sliders = [], numbers = [], items = [];
-  const clamp = v => Math.max(0, Math.min(255, Math.round(Number(v) || 0)));
+  const clamp = (i, v) => Math.max(0, Math.min(PARAMS[i].max ?? 255, Math.round(Number(v) || 0)));
 
   PARAMS.forEach((p, i) => {
     const div = document.createElement('div');
@@ -232,9 +237,9 @@
       <div class="desc" title="${p.desc}">${p.desc}</div>
       <div class="param-row">
         <button class="step" data-d="-1">－</button>
-        <input type="range" min="0" max="255" value="0">
+        <input type="range" min="0" max="${p.max ?? 255}" value="0">
         <button class="step" data-d="1">＋</button>
-        <input type="number" min="0" max="255" value="0">
+        <input type="number" min="0" max="${p.max ?? 255}" value="0">
       </div>`;
     grid.appendChild(div);
     const slider = div.querySelector('input[type=range]');
@@ -251,7 +256,7 @@
 
   const sendTimers = {};
   function setValue(i, v, immediate) {
-    v = clamp(v);
+    v = clamp(i, v);
     values[i] = v;
     sliders[i].value = v;
     numbers[i].value = v;
@@ -293,6 +298,11 @@
   document.getElementById('raw-toggle-btn').addEventListener('click', () => setRaw(!rawActive));
   document.getElementById('get-btn').addEventListener('click', () => sendCommand("GETS\n"));
   document.getElementById('save-btn').addEventListener('click', () => sendCommand("SAVE\n"));
+  document.getElementById('copy2sw-btn').addEventListener('click', () => {
+    if (confirm("現在のPCプロファイル（未保存の変更を含む）で、Switch用プロファイルを上書きします。よろしいですか？")) {
+      sendCommand("COPY2SW\n");
+    }
+  });
 
   document.getElementById('connect-btn').addEventListener('click', async () => {
     try {
@@ -324,6 +334,8 @@
   });
 
   function handleLine(line) {
+    const pm = line.match(/PROFILE:\s*(PC|SW)/);
+    if (pm) { document.getElementById('profile-label').textContent = pm[1]; return; }
     if (line.startsWith("HIT:")) { onHit(parseInt(line.substring(4))); return; }
     if (line.startsWith("RAW:")) {
       const parts = line.substring(4).split(',').map(Number);
@@ -344,6 +356,18 @@
     if (line === "OK:SAVE") {
       deviceValues = values.slice(); refreshDirty();
       logMessage("[OK] EEPROMに保存しました");
+      return;
+    }
+    if (line === "OK:COPY2SW") {
+      // COPY2SW saves both profiles on the device, so the PC profile
+      // shown here is now saved as well
+      deviceValues = values.slice(); refreshDirty();
+      logMessage("[OK] Switch用プロファイルへコピーしました（両プロファイル保存済み）");
+      return;
+    }
+    if (line === "OK:COPY2PC") {
+      logMessage("[OK] Switch用プロファイルを読み込みました。再取得します");
+      setTimeout(() => sendCommand("GETS\n"), 200);
       return;
     }
     if (line === "RAW_START" || line === "RAW_STOP") return;
